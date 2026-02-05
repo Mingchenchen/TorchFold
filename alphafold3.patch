@@ -1,0 +1,379 @@
+diff --git a/dev-requirements.txt b/dev-requirements.txt
+index b9db0e4..116594f 100644
+--- a/dev-requirements.txt
++++ b/dev-requirements.txt
+@@ -422,15 +422,6 @@ tqdm==4.67.0 \
+     --hash=sha256:0cd8af9d56911acab92182e88d763100d4788bdf421d251616040cc4d44863be \
+     --hash=sha256:fe5a6f95e6fe0b9755e9469b77b9c3cf850048224ecaa8293d7d2d31f97d869a
+     # via alphafold3 (pyproject.toml)
+-triton==3.1.0 \
+-    --hash=sha256:0f34f6e7885d1bf0eaaf7ba875a5f0ce6f3c13ba98f9503651c1e6dc6757ed5c \
+-    --hash=sha256:6b0dd10a925263abbe9fa37dcde67a5e9b2383fc269fdf59f5657cac38c5d1d8 \
+-    --hash=sha256:6dadaca7fc24de34e180271b5cf864c16755702e9f63a16f62df714a8099126a \
+-    --hash=sha256:aafa9a20cd0d9fee523cd4504aa7131807a864cd77dcf6efe7e981f18b8c6c11 \
+-    --hash=sha256:c8182f42fd8080a7d39d666814fa36c5e30cc00ea7eeeb1a2983dbb4c99a0fdc
+-    # via
+-    #   alphafold3 (pyproject.toml)
+-    #   jax-triton
+ typeguard==2.13.3 \
+     --hash=sha256:00edaa8da3a133674796cf5ea87d9f4b4c367d77476e185e80251cc13dfbb8c4 \
+     --hash=sha256:5e3e3be01e887e7eafae5af63d1f36c849aaa94e3a0112097312aabfa16284f1
+diff --git a/pyproject.toml b/pyproject.toml
+index 45412b6..eca61e0 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -24,7 +24,6 @@ dependencies = [
+     "jaxtyping==0.2.34",
+     "numpy",
+     "rdkit==2024.3.5",
+-    "triton==3.1.0",
+     "tqdm",
+     "typeguard==2.13.3",
+     "zstandard",
+diff --git a/requirements.txt b/requirements.txt
+index 9b94e0b..8af0ecd 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -422,15 +422,6 @@ tqdm==4.67.0 \
+     --hash=sha256:0cd8af9d56911acab92182e88d763100d4788bdf421d251616040cc4d44863be \
+     --hash=sha256:fe5a6f95e6fe0b9755e9469b77b9c3cf850048224ecaa8293d7d2d31f97d869a
+     # via alphafold3 (pyproject.toml)
+-triton==3.1.0 \
+-    --hash=sha256:0f34f6e7885d1bf0eaaf7ba875a5f0ce6f3c13ba98f9503651c1e6dc6757ed5c \
+-    --hash=sha256:6b0dd10a925263abbe9fa37dcde67a5e9b2383fc269fdf59f5657cac38c5d1d8 \
+-    --hash=sha256:6dadaca7fc24de34e180271b5cf864c16755702e9f63a16f62df714a8099126a \
+-    --hash=sha256:aafa9a20cd0d9fee523cd4504aa7131807a864cd77dcf6efe7e981f18b8c6c11 \
+-    --hash=sha256:c8182f42fd8080a7d39d666814fa36c5e30cc00ea7eeeb1a2983dbb4c99a0fdc
+-    # via
+-    #   alphafold3 (pyproject.toml)
+-    #   jax-triton
+ typeguard==2.13.3 \
+     --hash=sha256:00edaa8da3a133674796cf5ea87d9f4b4c367d77476e185e80251cc13dfbb8c4 \
+     --hash=sha256:5e3e3be01e887e7eafae5af63d1f36c849aaa94e3a0112097312aabfa16284f1
+diff --git a/run_alphafold.py b/run_alphafold.py
+index 5444e60..338da51 100644
+--- a/run_alphafold.py
++++ b/run_alphafold.py
+@@ -203,7 +203,7 @@ _RESOLVE_MSA_OVERLAPS = flags.DEFINE_bool(
+ )
+ _MAX_TEMPLATE_DATE = flags.DEFINE_string(
+     'max_template_date',
+-    '2021-09-30',  # By default, use the date from the AlphaFold 3 paper.
++    '2025-07-31',  # By default, use the date from the AlphaFold 3 paper.
+     'Maximum template release date to consider. Format: YYYY-MM-DD. All'
+     ' templates released after this date will be ignored. Controls also whether'
+     ' to allow use of model coordinates for a chemical component from the CCD'
+diff --git a/run_alphafold_test.py b/run_alphafold_test.py
+index bd984bf..0880c29 100644
+--- a/run_alphafold_test.py
++++ b/run_alphafold_test.py
+@@ -119,7 +119,7 @@ class InferenceTest(parameterized.TestCase):
+         rna_central_database_path=rna_central_database_path,
+         pdb_database_path=pdb_database_path,
+         seqres_database_path=seqres_database_path,
+-        max_template_date=datetime.date(2021, 9, 30),
++        max_template_date=datetime.date(2025, 7, 31),
+     )
+     test_input = {
+         'name': '5tgy',
+diff --git a/src/alphafold3/common/folding_input.py b/src/alphafold3/common/folding_input.py
+index ab8c06f..59e30d0 100644
+--- a/src/alphafold3/common/folding_input.py
++++ b/src/alphafold3/common/folding_input.py
+@@ -210,6 +210,10 @@ class ProteinChain:
+   def templates(self) -> Sequence[Template] | None:
+     return self._templates
+ 
++  @sequence.setter
++  def sequence(self, value):
++    self._sequence = value
++
+   def __len__(self) -> int:
+     return len(self._sequence)
+ 
+diff --git a/src/alphafold3/data/templates.py b/src/alphafold3/data/templates.py
+index bd9bc79..aaeb380 100644
+--- a/src/alphafold3/data/templates.py
++++ b/src/alphafold3/data/templates.py
+@@ -322,6 +322,9 @@ class Hit:
+         aligned to the query is less than this proportion of the template
+         length.
+     """
++    from datetime import datetime
++    release_date_cutoff = datetime.strptime(release_date_cutoff, '%Y-%m-%d').date()
++
+     # Exclude hits which are too recent.
+     if (
+         release_date_cutoff is not None
+@@ -730,9 +733,11 @@ class Templates:
+     Raises:
+       HitDateError: If template's release date exceeds max cutoff date.
+     """
+-
++    from datetime import datetime
++    release_date_cutoff = datetime.strptime(self.release_date_cutoff, '%Y-%m-%d').date()
++    
+     for hit in self.hits:
+-      if hit.release_date > self.release_date_cutoff:  # pylint: disable=comparison-with-callable
++      if hit.release_date > release_date_cutoff:  # pylint: disable=comparison-with-callable
+         raise HitDateError(
+             f'Invalid release date for hit {hit.pdb_id=}, when release date '
+             f'cutoff is {self.release_date_cutoff}.'
+diff --git a/src/alphafold3/model/features.py b/src/alphafold3/model/features.py
+index dfc13e3..2483069 100644
+--- a/src/alphafold3/model/features.py
++++ b/src/alphafold3/model/features.py
+@@ -13,6 +13,7 @@
+ import dataclasses
+ import datetime
+ import itertools
++import concurrent.futures
+ from typing import Any, Self, TypeAlias
+ 
+ from absl import logging
+@@ -1790,6 +1791,201 @@ class RefStructure:
+ 
+     return cls(**result), adjusted_ligand_ligand_bonds
+ 
++  @classmethod
++  def compute_features_parallel(
++          cls,
++          all_token_atoms_layout: atom_layout.AtomLayout,
++          ccd: chemical_components.Ccd,
++          padding_shapes: PaddingShapes,
++          chemical_components_data: struc_chem_comps.ChemicalComponentsData,
++          random_state: np.random.RandomState,
++          ref_max_modified_date: datetime.date,
++          conformer_max_iterations: int | None,
++          ligand_ligand_bonds: atom_layout.AtomLayout | None = None,
++          max_workers: int | None = None,
++  ) -> tuple[Self, Any]:
++      """Reference structure information for each residue."""
++
++      # Get features per atom
++      padded_shape = (padding_shapes.num_tokens, all_token_atoms_layout.shape[1])
++      result = {
++          'positions': np.zeros((*padded_shape, 3), 'float32'),
++          'mask': np.zeros(padded_shape, 'bool'),
++          'element': np.zeros(padded_shape, 'int32'),
++          'charge': np.zeros(padded_shape, 'float32'),
++          'atom_name_chars': np.zeros((*padded_shape, 4), 'int32'),
++          'ref_space_uid': np.zeros((*padded_shape,), 'int32'),
++      }
++
++      atom_names_all = []
++      chain_ids_all = []
++      res_ids_all = []
++
++      # Cache reference conformations for each residue.
++      conformations = {}
++      ref_space_uids = {}
++
++      # Collect unique (chain_id, res_id, res_name) combinations in original order
++      unique_residues = []
++      seen_keys = set()
++      for idx in np.ndindex(all_token_atoms_layout.shape):
++          chain_id = all_token_atoms_layout.chain_id[idx]
++          res_id = all_token_atoms_layout.res_id[idx]
++          res_name = all_token_atoms_layout.res_name[idx]
++          key = (chain_id, res_id)
++          if key not in seen_keys:
++              unique_residues.append((chain_id, res_id, res_name))
++              seen_keys.add(key)
++
++      # Pre-extract random state snapshots for each residue in original order
++      random_state_snapshots = []
++      current_state = random_state.get_state()
++      for chain_id, res_id, res_name in unique_residues:
++          random_state.set_state(current_state)
++          snapshot = random_state.get_state()
++          random_state_snapshots.append(snapshot)
++          _ = random_state.randint(1, 1 << 31)  # conformer_random_seed
++          _ = random_state.normal(size=(2, 3))  # random_rotation
++          _ = random_state.normal(size=(3,))  # translation
++          # Save the new state for the next iteration
++          current_state = random_state.get_state()
++
++      # Parallel processing: pre-compute all conformations
++      def _get_reference_wrapper(args):
++          """Wrapper function for parallel get_reference calls."""
++          chain_id, res_id, res_name, state_snapshot = args
++          # Create a new RandomState with the saved state
++          local_random_state = np.random.RandomState()
++          local_random_state.set_state(state_snapshot)
++          try:
++              conf, from_atom, dest_atom = get_reference(
++                  res_name=res_name,
++                  chemical_components_data=chemical_components_data,
++                  ccd=ccd,
++                  random_state=local_random_state,
++                  ref_max_modified_date=ref_max_modified_date,
++                  conformer_max_iterations=conformer_max_iterations,
++              )
++              return (chain_id, res_id), conf, from_atom, dest_atom, res_name
++          except Exception as e:
++              logging.error(
++                  'Error processing residue %s (%s, %s): %s',
++                  res_name, chain_id, res_id, str(e)
++              )
++              raise
++
++      # Prepare arguments for parallel execution
++      parallel_args = []
++      for (chain_id, res_id, res_name), state_snapshot in zip(unique_residues, random_state_snapshots):
++          parallel_args.append((chain_id, res_id, res_name, state_snapshot))
++
++      # Execute get_reference calls in parallel
++      bond_info = {}  # Store from_atom, dest_atom, res_name for each (chain_id, res_id)
++      # Use max_workers if provided, otherwise use default (typically CPU count)
++      with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
++          futures = {executor.submit(_get_reference_wrapper, args): args
++                     for args in parallel_args}
++          for future in concurrent.futures.as_completed(futures):
++              try:
++                  key, conf, from_atom, dest_atom, res_name = future.result()
++                  conformations[key] = conf
++                  bond_info[key] = (from_atom, dest_atom, res_name)
++              except Exception as e:
++                  chain_id, res_id, res_name, _ = futures[future]
++                  logging.error(
++                      'Failed to process residue %s (%s, %s): %s',
++                      res_name, chain_id, res_id, str(e)
++                  )
++                  # Set default conformation on error
++                  conformations[(chain_id, res_id)] = {}
++                  bond_info[(chain_id, res_id)] = (None, None, res_name)
++
++      # Process bond information for non-standard residues (only once per residue)
++      processed_bonds = set()
++      for chain_id, res_id, res_name in unique_residues:
++          key = (chain_id, res_id)
++          is_non_standard = res_name not in _STANDARD_RESIDUES
++          if key in bond_info:
++              from_atom, dest_atom, _ = bond_info[key]
++              if (
++                      is_non_standard
++                      and (from_atom is not None)
++                      and (dest_atom is not None)
++                      and key not in processed_bonds
++              ):
++                  # Add intra-ligand bond graph
++                  atom_names_ligand = np.stack(
++                      [from_atom, dest_atom], axis=1, dtype=object
++                  )
++                  atom_names_all.append(atom_names_ligand)
++                  res_ids_all.append(
++                      np.full_like(atom_names_ligand, res_id, dtype=int)
++                  )
++                  chain_ids_all.append(
++                      np.full_like(atom_names_ligand, chain_id, dtype=object)
++                  )
++                  processed_bonds.add(key)
++
++      # Process all atoms using pre-computed conformations
++      for idx in np.ndindex(all_token_atoms_layout.shape):
++          chain_id = all_token_atoms_layout.chain_id[idx]
++          res_id = all_token_atoms_layout.res_id[idx]
++          res_name = all_token_atoms_layout.res_name[idx]
++          atom_name = all_token_atoms_layout.atom_name[idx]
++          if not atom_name:
++              ref = _DEFAULT_BLANK_REF
++          else:
++              key = (chain_id, res_id)
++              conformation = conformations.get(
++                  key, {atom_name: _DEFAULT_BLANK_REF}
++              )
++              if atom_name not in conformation:
++                  logging.warning(
++                      'Missing atom "%s" for CCD "%s"',
++                      atom_name,
++                      res_name,
++                  )
++              ref = conformation.get(atom_name, _DEFAULT_BLANK_REF)
++          for k in ref:
++              result[k][idx] = ref[k]
++
++          # Assign a unique reference space id to each component, to determine which
++          # reference positions live in the same reference space.
++          space_str_id = (
++              all_token_atoms_layout.chain_id[idx],
++              all_token_atoms_layout.res_id[idx],
++          )
++          if space_str_id not in ref_space_uids:
++              ref_space_uids[space_str_id] = len(ref_space_uids)
++          result['ref_space_uid'][idx] = ref_space_uids[space_str_id]
++
++      if atom_names_all:
++          atom_names_all = np.concatenate(atom_names_all, axis=0)
++          res_ids_all = np.concatenate(res_ids_all, axis=0)
++          chain_ids_all = np.concatenate(chain_ids_all, axis=0)
++          if ligand_ligand_bonds is not None:
++              adjusted_ligand_ligand_bonds = atom_layout.AtomLayout(
++                  atom_name=np.concatenate(
++                      [ligand_ligand_bonds.atom_name, atom_names_all], axis=0
++                  ),
++                  chain_id=np.concatenate(
++                      [ligand_ligand_bonds.chain_id, chain_ids_all], axis=0
++                  ),
++                  res_id=np.concatenate(
++                      [ligand_ligand_bonds.res_id, res_ids_all], axis=0
++                  ),
++              )
++          else:
++              adjusted_ligand_ligand_bonds = atom_layout.AtomLayout(
++                  atom_name=atom_names_all,
++                  chain_id=chain_ids_all,
++                  res_id=res_ids_all,
++              )
++      else:
++          adjusted_ligand_ligand_bonds = ligand_ligand_bonds
++
++      return cls(**result), adjusted_ligand_ligand_bonds
++
+   @classmethod
+   def from_data_dict(cls, batch: BatchDict) -> Self:
+     return cls(
+diff --git a/src/alphafold3/model/pipeline/pipeline.py b/src/alphafold3/model/pipeline/pipeline.py
+index a7e395f..31f4483 100644
+--- a/src/alphafold3/model/pipeline/pipeline.py
++++ b/src/alphafold3/model/pipeline/pipeline.py
+@@ -144,7 +144,7 @@ class WholePdbPipeline:
+     atom_cross_att_keys_subset_size: int = 128
+     flatten_non_standard_residues: bool = True
+     remove_nonsymmetric_bonds: bool = False
+-    deterministic_frames: bool = True
++    deterministic_frames: bool = False
+     conformer_max_iterations: int | None = None
+     resolve_msa_overlaps: bool = True
+ 
+@@ -361,7 +361,7 @@ class WholePdbPipeline:
+     ref_max_modified_date = self._config.ref_max_modified_date
+     conformer_max_iterations = self._config.conformer_max_iterations
+     batch_ref_structure, ligand_ligand_bonds = (
+-        features.RefStructure.compute_features(
++        features.RefStructure.compute_features_parallel(
+             all_token_atoms_layout=all_token_atoms_layout,
+             ccd=ccd,
+             padding_shapes=padding_shapes,
+@@ -370,11 +370,12 @@ class WholePdbPipeline:
+             ref_max_modified_date=ref_max_modified_date,
+             conformer_max_iterations=conformer_max_iterations,
+             ligand_ligand_bonds=ligand_ligand_bonds,
++            max_workers=8
+         )
+     )
+     deterministic_ref_structure = None
+     if self._config.deterministic_frames:
+-      deterministic_ref_structure, _ = features.RefStructure.compute_features(
++      deterministic_ref_structure, _ = features.RefStructure.compute_features_parallel(
+           all_token_atoms_layout=all_token_atoms_layout,
+           ccd=ccd,
+           padding_shapes=padding_shapes,
+@@ -385,6 +386,7 @@ class WholePdbPipeline:
+           ref_max_modified_date=ref_max_modified_date,
+           conformer_max_iterations=None,
+           ligand_ligand_bonds=ligand_ligand_bonds,
++          max_workers=8
+       )
+ 
+     # Create ligand-polymer bond features.

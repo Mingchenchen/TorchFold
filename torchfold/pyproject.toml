@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchfold"
+authors = [{ name = "Shenggan Cheng", email = "shenggan.c@u.nus.edu" }]
+description = "fold for everyone."
+readme = { file = "README.md", content-type = "text/markdown" }
+dynamic = ["version"]
+dependencies = [
+    "torch", 
+    "einops",
+]
+
+[tool.setuptools]
+packages = ["torchfold"]
+
+[tool.setuptools.dynamic]
+version = { attr = "torchfold.version.VERSION" }
