@@ -1,0 +1,17 @@
+{
+  "name": "test",
+  "sequences": [
+    {
+      "protein": {
+        "id": "A",
+        "sequence": "GMRESYANENQFGFKTINSDIHKIVIVGGYGHDHNMTYIQALRHFSTFANGLHLSKQPINNLAQGFIDAFHKVRDWFGDYSEQFLKESRQLLQQANDLKQG"
+
+      
+      
+      }
+    }
+  ],
+  "modelSeeds": [1],
+  "dialect": "alphafold3",
+  "version": 1
+}
