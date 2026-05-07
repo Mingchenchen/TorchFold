@@ -19,6 +19,7 @@ import pathlib
 import shutil
 import string
 import sys
+import copy
 import textwrap
 import time
 from typing import overload
@@ -228,28 +229,36 @@ class ModelRunner:
         if _CHECKPOINT_PATH.value:
             ckpt_path = pathlib.Path(_CHECKPOINT_PATH.value)
             print(f'Loading PyTorch checkpoint from {ckpt_path} ...')
+            
             # Load checkpoint (same as training code: weights_only=False)
             checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
             
             # Extract model state dict (training checkpoints use 'model_state_dict')
             state_dict = checkpoint.get('model_state_dict', checkpoint)
-
+            params = state_dict.copy()
+            for k in state_dict.keys():
+                if 'q_projection' in k:
+                    k_name = k.replace('q_projection', 'k_projection')
+                    v_name = k.replace('q_projection', 'v_projection')
+                    key = k.replace('q_projection', 'qkv_projection')
+                    if k_name in state_dict.keys() and v_name in state_dict.keys():
+                        params[key] = torch.cat((params[k], params[k_name], params[v_name]), dim=0)
+                    elif 'bias' in k:
+                        bias_0 = torch.zeros_like(params[k])
+                        params[key] = torch.cat((params[k], bias_0, bias_0), dim=0)
+            del state_dict
             # Handle DDP-trained checkpoints: remove 'module.' prefix if present
             # Training code saves as: model.module.state_dict() when use_ddp=True
-            if any(k.startswith('module.') for k in state_dict.keys()):
-                state_dict = {k.replace('module.', '', 1) if k.startswith('module.') else k: v 
-                             for k, v in state_dict.items()}
+            if any(k.startswith('module.') for k in params.keys()):
+                params = {k.replace('module.', '', 1) if k.startswith('module.') else k: v 
+                             for k, v in params.items()}
             
             # Load state dict (same approach as training code, but with strict=False for flexibility)
-            missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            missing, _ = self._model.load_state_dict(params, strict=False)
             
             if missing:
                 print(f'Warning: {len(missing)} missing keys:')
                 for k in missing:
-                    print(f'  {k}')
-            if unexpected:
-                print(f'Warning: {len(unexpected)} unexpected keys:')
-                for k in unexpected:
                     print(f'  {k}')
             print(f'Successfully loaded checkpoint from {ckpt_path}')
         else:
