@@ -189,12 +189,16 @@ class Evoformer(nn.Module):
         self, msa_batch: features.MSA,
         pair_activations: torch.Tensor,
         pair_mask: torch.Tensor,
-        target_feat: torch.Tensor
+        target_feat: torch.Tensor,
+        msa_row_order: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Processes MSA and returns updated pair activations."""
         dtype = pair_activations.dtype
 
-        msa_batch = featurization.shuffle_msa(msa_batch)
+        if msa_row_order is None:
+            msa_batch = featurization.shuffle_msa(msa_batch)
+        else:
+            msa_batch = msa_batch.index_msa_rows(msa_row_order)
         msa_batch = featurization.truncate_msa_batch(msa_batch, self.num_msa)
 
         msa_mask = msa_batch.mask.to(dtype=dtype)
@@ -220,6 +224,7 @@ class Evoformer(nn.Module):
         prev: dict[str, torch.Tensor],  # variable
         target_feat: torch.Tensor,  # constant
         idx: int = 0,
+        msa_row_order: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
 
         if self.first_run:
@@ -247,6 +252,7 @@ class Evoformer(nn.Module):
             pair_activations=pair_activations,
             pair_mask=self.pair_mask,
             target_feat=target_feat,
+            msa_row_order=msa_row_order,
         )
 
         single_activations = self.single_activations(target_feat)
@@ -315,11 +321,17 @@ class AlphaFold3(nn.Module):
         positions: torch.Tensor,
         noise_level_prev: torch.Tensor,
         mask: torch.Tensor,
-        noise_level: torch.Tensor
+        noise_level: torch.Tensor,
+        rotation_noise: torch.Tensor | None = None,
+        translation_noise: torch.Tensor | None = None,
+        standard_noise: torch.Tensor | None = None,
+        return_denoised: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
         positions = diffusion_head.random_augmentation(
-            positions=positions, mask=mask
+            positions=positions, mask=mask,
+            rotation_noise=rotation_noise,
+            translation_noise=translation_noise,
         )
 
         gamma = self.gamma_0 * (noise_level > self.gamma_min)
@@ -327,8 +339,10 @@ class AlphaFold3(nn.Module):
 
         noise_scale = self.noise_scale * \
             torch.sqrt(t_hat**2 - noise_level_prev**2)
-        noise = noise_scale * \
-            torch.randn(size=positions.shape, device=noise_scale.device)
+        if standard_noise is None:
+            standard_noise = torch.randn(
+                size=positions.shape, device=noise_scale.device)
+        noise = noise_scale * standard_noise
         # noise = noise_scale
         positions_noisy = positions + noise
 
@@ -342,12 +356,15 @@ class AlphaFold3(nn.Module):
         d_t = noise_level - t_hat
         positions_out = positions_noisy + self.step_scale * d_t * grad
 
+        if return_denoised:
+            return positions_out, positions_denoised
         return positions_out
 
     def _sample_diffusion(
         self,
         batch: feat_batch.Batch,
         embeddings: dict[str, torch.Tensor],
+        random_tape: dict[str, torch.Tensor] | None = None,
     ) -> dict[str, torch.Tensor]:
         """Sample using denoiser on batch."""
 
@@ -359,9 +376,16 @@ class AlphaFold3(nn.Module):
         noise_levels = diffusion_head.noise_schedule(
             torch.linspace(0, 1, self.diffusion_steps + 1, device=device))
 
-        positions = torch.randn(
-            (num_samples,) + mask.shape + (3,), device=device)
+        if random_tape is None:
+            positions = torch.randn(
+                (num_samples,) + mask.shape + (3,), device=device)
+        else:
+            positions = random_tape['initial_positions_noise']
         positions *= noise_levels[0]
+        trajectory = None if random_tape is None else torch.empty(
+            (self.diffusion_steps,) + positions.shape, device=device)
+        first_denoised = None if random_tape is None else torch.empty_like(
+            positions)
 
         if USE_DIST:
             assert self.diffusion_steps == 200
@@ -428,21 +452,35 @@ class AlphaFold3(nn.Module):
         else:
             for sample_idx in range(num_samples):
                 for step_idx in trange(self.diffusion_steps, desc=f"Diffusion {sample_idx}"):
-                    positions[sample_idx] = self._apply_denoising_step(
+                    step_output = self._apply_denoising_step(
                         batch,
                         embeddings,
                         positions[sample_idx],
                         noise_levels[step_idx],
                         mask,
                         noise_levels[1 + step_idx],
+                        rotation_noise=None if random_tape is None else random_tape['rotation_noise'][step_idx, sample_idx],
+                        translation_noise=None if random_tape is None else random_tape['translation_noise'][step_idx, sample_idx],
+                        standard_noise=None if random_tape is None else random_tape['diffusion_noise'][step_idx, sample_idx],
+                        return_denoised=random_tape is not None and step_idx == 0,
                     )
+                    if random_tape is not None and step_idx == 0:
+                        positions[sample_idx], first_denoised[sample_idx] = step_output
+                    else:
+                        positions[sample_idx] = step_output
+                    if trajectory is not None:
+                        trajectory[step_idx, sample_idx] = positions[sample_idx]
 
 
         final_dense_atom_mask = torch.tile(mask[None], (num_samples, 1, 1))
 
-        return {'atom_positions': positions, 'mask': final_dense_atom_mask}
+        output = {'atom_positions': positions, 'mask': final_dense_atom_mask}
+        if trajectory is not None:
+            output['trajectory'] = trajectory
+            output['denoised_step_1'] = first_denoised
+        return output
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor], random_tape=None) -> dict[str, torch.Tensor]:
         batch = feat_batch.Batch.from_data_dict(batch)
         num_res = batch.num_res
 
@@ -461,18 +499,25 @@ class AlphaFold3(nn.Module):
 
         t1 = time.time()
         rk = dist.get_rank() if USE_DIST else 0
+        num_trunk_passes = self.num_recycles + 1
+        checkpoint_indices = tuple(range(num_trunk_passes))
+        trunk_checkpoints = {}
         # logger.info(f"rank {rk}: Start running Evoformer")
-        for i in range(self.num_recycles + 1):
+        for i in range(num_trunk_passes):
             embeddings = self.evoformer(
                 batch=batch,
                 prev=embeddings,
                 target_feat=target_feat,
                 idx=i,
+                msa_row_order=None if random_tape is None else random_tape['msa_row_order'][i],
             )
+            if random_tape is not None and i in checkpoint_indices:
+                trunk_checkpoints[i] = (
+                    embeddings['single'].clone(), embeddings['pair'].clone())
 
         t2 = time.time()
         # logger.info(f"Time taken for Evoformer: {t2 - t1:.4f}s")
-        samples = self._sample_diffusion(batch, embeddings)
+        samples = self._sample_diffusion(batch, embeddings, random_tape)
         t3 = time.time()
         # logger.info(f"Time taken for Diffusion: {t3 - t2:.4f}s")
 
@@ -501,8 +546,22 @@ class AlphaFold3(nn.Module):
         distogram = self.distogram_head(batch, embeddings)
         # logger.info(f"Time taken for Distogram: {time.time() - t4:.4f}s")
 
-        return {
+        output = {
             'diffusion_samples': samples,
             'distogram': distogram,
             **confidence_output,
         }
+        if random_tape is not None:
+            output['num_trunk_passes'] = num_trunk_passes
+            output['trunk_checkpoint_passes'] = tuple(
+                index + 1 for index in checkpoint_indices)
+            output['single_embeddings'] = embeddings['single']
+            output['pair_embeddings'] = embeddings['pair']
+        if random_tape is not None and checkpoint_indices:
+            output['trunk_single_checkpoints'] = torch.stack(
+                [trunk_checkpoints[index][0] for index in checkpoint_indices])
+            output['trunk_pair_checkpoints'] = torch.stack(
+                [trunk_checkpoints[index][1] for index in checkpoint_indices])
+        if random_tape is None:
+            distogram.pop('distogram')
+        return output

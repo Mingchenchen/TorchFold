@@ -72,6 +72,7 @@ class DistogramHead(nn.Module):
         return {
             'bin_edges': self.breaks,
             'contact_probs': contact_probs,
+            'distogram': logits,
         }
 
 

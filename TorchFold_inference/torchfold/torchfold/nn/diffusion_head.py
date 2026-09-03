@@ -34,15 +34,20 @@ def noise_schedule(t, smin=0.0004, smax=160.0, p=7):
     )
 
 
-def random_rotation(device, dtype):
+def rotation_from_noise(noise):
     # Create a random rotation (Gram-Schmidt orthogonalization of two
     # random normal vectors)
-    v0, v1 = torch.randn(size=(2, 3), dtype=dtype, device=device)
+    v0, v1 = noise
     e0 = v0 / torch.clamp(torch.linalg.norm(v0), min=1e-10)
     v1 = v1 - e0 * torch.dot(v1, e0)
     e1 = v1 / torch.clamp(torch.linalg.norm(v1), min=1e-10)
     e2 = torch.cross(e0, e1, dim=-1)
     return torch.stack([e0, e1, e2])
+
+
+def random_rotation(device, dtype):
+    noise = torch.randn(size=(2, 3), dtype=dtype, device=device)
+    return rotation_from_noise(noise)
 
 
 def _strict_random_augmentation(function):
@@ -67,6 +72,8 @@ def _strict_random_augmentation(function):
 def random_augmentation(
     positions: torch.Tensor,
     mask: torch.Tensor,
+    rotation_noise: torch.Tensor | None = None,
+    translation_noise: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply random rigid augmentation.
 
@@ -81,9 +88,13 @@ def random_augmentation(
     center = utils.mask_mean(
         mask[..., None], positions, dim=(-2, -3), keepdim=True, eps=1e-6
     )
-    rot = random_rotation(device=positions.device, dtype=positions.dtype)
-    translation = torch.randn(
-        size=(3,), dtype=positions.dtype, device=positions.device)
+    if rotation_noise is None:
+        rot = random_rotation(device=positions.device, dtype=positions.dtype)
+        translation = torch.randn(
+            size=(3,), dtype=positions.dtype, device=positions.device)
+    else:
+        rot = rotation_from_noise(rotation_noise)
+        translation = translation_noise
 
     augmented_positions = (
         torch.einsum(
