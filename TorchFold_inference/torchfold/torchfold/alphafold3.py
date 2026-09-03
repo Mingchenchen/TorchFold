@@ -462,7 +462,7 @@ class AlphaFold3(nn.Module):
         t1 = time.time()
         rk = dist.get_rank() if USE_DIST else 0
         # logger.info(f"rank {rk}: Start running Evoformer")
-        for i in range(self.num_recycles):
+        for i in range(self.num_recycles + 1):
             embeddings = self.evoformer(
                 batch=batch,
                 prev=embeddings,

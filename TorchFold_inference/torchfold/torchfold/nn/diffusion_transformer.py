@@ -210,7 +210,7 @@ class DiffusionTransformer(nn.Module):
 
         self.num_super_blocks = self.num_blocks // self.super_block_size
 
-        self.pair_input_layer_norm = fastnn.LayerNorm(self.c_pair_cond)
+        self.pair_input_layer_norm = fastnn.LayerNorm(self.c_pair_cond, bias=False)
         self.pair_logits_projection = nn.ModuleList(
             [nn.Linear(self.c_pair_cond, self.super_block_size * self.num_head, bias=False) for _ in range(self.num_super_blocks)])
 
