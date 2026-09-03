@@ -481,6 +481,22 @@ class AlphaFold3(nn.Module):
         return output
 
     def forward(self, batch: dict[str, torch.Tensor], random_tape=None) -> dict[str, torch.Tensor]:
+        # first_run caches are only valid within one forward pass, but
+        # run_alphafold.py reuses one model across seeds and inputs. Values must
+        # be cleared too, not just flags -- pair_logits_list is appended to, and
+        # nn.Module attributes (Attention.pair_logits) must be left alone.
+        for _m in self.modules():
+            for _f in ('first_run', 'first_run_relative_encoding',
+                       'first_run_embed_bonds'):
+                if getattr(_m, _f, None) is False:
+                    setattr(_m, _f, True)
+            for _c in ('pair_logits_list', 'pair_logits', 'padded_pair_logits',
+                       'rel_feat', 'bonds_act', 'pair_act', 'queries_mask',
+                       'queries_single_cond', 'keys_mask', 'keys_single_cond',
+                       'single_cond', 'pair_cond'):
+                _v = getattr(_m, _c, None)
+                if isinstance(_v, (list, torch.Tensor)):
+                    setattr(_m, _c, [] if isinstance(_v, list) else None)
         batch = feat_batch.Batch.from_data_dict(batch)
         num_res = batch.num_res
 
