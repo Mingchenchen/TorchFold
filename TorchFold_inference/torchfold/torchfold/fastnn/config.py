@@ -1,3 +1,8 @@
+# Opt-in accuracy controls used by the AlphaFast parity validator.
+strict_random_augmentation = False
+strict_diffusion_explicit_highest = False
+
+
 # options: ["torch", "triton"]
 layer_norm_implementation = "torch"
 

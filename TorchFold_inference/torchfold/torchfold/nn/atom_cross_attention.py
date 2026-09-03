@@ -10,6 +10,23 @@ from torchfold.nn import atom_layout, utils
 from torchfold.nn.diffusion_transformer import DiffusionCrossAttTransformer
 
 from torchfold import fastnn
+from torchfold.fastnn import config as fastnn_config
+
+
+def _explicit_highest_projection(
+    module: nn.Module, value: torch.Tensor
+) -> torch.Tensor:
+    if not fastnn_config.strict_diffusion_explicit_highest:
+        return module(value)
+    previous_precision = torch.get_float32_matmul_precision()
+    previous_allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+    try:
+        torch.set_float32_matmul_precision("highest")
+        torch.backends.cuda.matmul.allow_tf32 = False
+        return module(value)
+    finally:
+        torch.set_float32_matmul_precision(previous_precision)
+        torch.backends.cuda.matmul.allow_tf32 = previous_allow_tf32
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,7 +146,9 @@ class AtomCrossAttEncoder(nn.Module):
 
         # Compute per-atom single conditioning
         # Shape (num_tokens, num_dense, channels)
-        act = self.embed_ref_pos(batch.ref_structure.positions)
+        act = _explicit_highest_projection(
+            self.embed_ref_pos, batch.ref_structure.positions
+        )
         act += self.embed_ref_mask(batch.ref_structure.mask[:, :, None].to(
             dtype=self.embed_ref_mask.weight.dtype))
 
@@ -205,8 +224,10 @@ class AtomCrossAttEncoder(nn.Module):
 
             # If provided, broadcast single conditioning from trunk to all queries
             if trunk_single_cond is not None:
-                trunk_single_cond = self.embed_trunk_single_cond(
-                    self.lnorm_trunk_single_cond(trunk_single_cond))
+                trunk_single_cond = _explicit_highest_projection(
+                    self.embed_trunk_single_cond,
+                    self.lnorm_trunk_single_cond(trunk_single_cond),
+                )
                 queries_single_cond += atom_layout.convert(
                     batch.atom_cross_att.tokens_to_queries,
                     trunk_single_cond,
@@ -238,8 +259,10 @@ class AtomCrossAttEncoder(nn.Module):
             pair_act = row_act[:, :, None, :] + col_act[:, None, :, :]
 
             if trunk_pair_cond is not None:
-                trunk_pair_cond = self.embed_trunk_pair_cond(
-                    self.lnorm_trunk_pair_cond(trunk_pair_cond))
+                trunk_pair_cond = _explicit_highest_projection(
+                    self.embed_trunk_pair_cond,
+                    self.lnorm_trunk_pair_cond(trunk_pair_cond),
+                )
 
                 # Create the GatherInfo into a flattened trunk_pair_cond from the
                 # queries and keys gather infos.
@@ -292,8 +315,9 @@ class AtomCrossAttEncoder(nn.Module):
             )
             offsets = queries_ref_pos[:, :, None, :] - keys_ref_pos[:, None, :, :]
 
-            pair_act += (self.embed_pair_offsets_1(offsets)
-                        * offsets_valid[:, :, :, None])
+            pair_act += (
+                _explicit_highest_projection(self.embed_pair_offsets_1, offsets)
+                * offsets_valid[:, :, :, None])
 
             # Embed pairwise inverse squared distances
             sq_dists = torch.sum(torch.square(offsets), dim=-1)
@@ -326,7 +350,9 @@ class AtomCrossAttEncoder(nn.Module):
                 layout_axes=(-3, -2),
             )
 
-            queries_act = self.atom_positions_to_features(queries_act)
+            queries_act = _explicit_highest_projection(
+                self.atom_positions_to_features, queries_act
+            )
             queries_act *= self.queries_mask[..., None]
             queries_act += self.queries_single_cond
 
@@ -416,8 +442,9 @@ class AtomCrossAttDecoder(nn.Module):
 
         queries_act *= enc.queries_mask[..., None]
         queries_act = self.atom_features_layer_norm(queries_act)
-        queries_position_update = self.atom_features_to_position_update(
-            queries_act)
+        queries_position_update = _explicit_highest_projection(
+            self.atom_features_to_position_update, queries_act
+        )
         position_update = atom_layout.convert(
             batch.atom_cross_att.queries_to_token_atoms,
             queries_position_update,

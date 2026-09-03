@@ -1,3 +1,4 @@
+import functools
 import torch
 import torch.nn as nn
 
@@ -7,6 +8,7 @@ from torchfold.nn.diffusion_transformer import DiffusionTransformer, DiffusionTr
 from torchfold.nn.atom_cross_attention import AtomCrossAttEncoder, AtomCrossAttDecoder
 
 from torchfold import fastnn
+from torchfold.fastnn import config as fastnn_config
 
 # Carefully measured by averaging multimer training set.
 SIGMA_DATA = 16.0
@@ -43,6 +45,25 @@ def random_rotation(device, dtype):
     return torch.stack([e0, e1, e2])
 
 
+def _strict_random_augmentation(function):
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        if not fastnn_config.strict_random_augmentation:
+            return function(*args, **kwargs)
+        previous_precision = torch.get_float32_matmul_precision()
+        previous_allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            torch.set_float32_matmul_precision("highest")
+            torch.backends.cuda.matmul.allow_tf32 = False
+            return function(*args, **kwargs)
+        finally:
+            torch.set_float32_matmul_precision(previous_precision)
+            torch.backends.cuda.matmul.allow_tf32 = previous_allow_tf32
+
+    return wrapped
+
+
+@_strict_random_augmentation
 def random_augmentation(
     positions: torch.Tensor,
     mask: torch.Tensor,
@@ -133,6 +154,22 @@ class DiffusionHead(nn.Module):
         self.single_cond = None
         self.pair_cond = None
 
+    @staticmethod
+    def _explicit_highest_projection(
+        module: nn.Module, value: torch.Tensor
+    ) -> torch.Tensor:
+        if not fastnn_config.strict_diffusion_explicit_highest:
+            return module(value)
+        previous_precision = torch.get_float32_matmul_precision()
+        previous_allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            torch.set_float32_matmul_precision("highest")
+            torch.backends.cuda.matmul.allow_tf32 = False
+            return module(value)
+        finally:
+            torch.set_float32_matmul_precision(previous_precision)
+            torch.backends.cuda.matmul.allow_tf32 = previous_allow_tf32
+
     def _conditioning(
         self,
         batch,
@@ -150,8 +187,9 @@ class DiffusionHead(nn.Module):
             ).to(dtype=pair_embedding.dtype)
             features_2d = torch.concatenate([pair_embedding, rel_features], dim=-1)
 
-            pair_cond = self.pair_cond_initial_projection(
-                self.pair_cond_initial_norm(features_2d)
+            pair_cond = self._explicit_highest_projection(
+                self.pair_cond_initial_projection,
+                self.pair_cond_initial_norm(features_2d),
             )
 
             pair_cond += self.pair_transition_0(pair_cond)
@@ -160,8 +198,10 @@ class DiffusionHead(nn.Module):
             target_feat = embeddings['target_feat']
             features_1d = torch.concatenate(
                 [single_embedding, target_feat], dim=-1)
-            single_cond = self.single_cond_initial_projection(
-                self.single_cond_initial_norm(features_1d))
+            single_cond = self._explicit_highest_projection(
+                self.single_cond_initial_projection,
+                self.single_cond_initial_norm(features_1d),
+            )
 
             self.single_cond = single_cond
             self.pair_cond = pair_cond
@@ -172,8 +212,9 @@ class DiffusionHead(nn.Module):
             (1 / 4) * torch.log(noise_level / SIGMA_DATA)
         )
 
-        single_cond += self.noise_embedding_initial_projection(
-            self.noise_embedding_initial_norm(noise_embedding)
+        single_cond += self._explicit_highest_projection(
+            self.noise_embedding_initial_projection,
+            self.noise_embedding_initial_norm(noise_embedding),
         )
 
         single_cond += self.single_transition_0(single_cond)
@@ -213,8 +254,9 @@ class DiffusionHead(nn.Module):
         )
         act = enc.token_act
 
-        act += self.single_cond_embedding_projection(
-            self.single_cond_embedding_norm(trunk_single_cond)
+        act += self._explicit_highest_projection(
+            self.single_cond_embedding_projection,
+            self.single_cond_embedding_norm(trunk_single_cond),
         )
 
         act = self.transformer(
